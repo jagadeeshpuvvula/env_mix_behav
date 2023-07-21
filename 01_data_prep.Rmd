@@ -1,0 +1,58 @@
+---
+title: "01_data_prep"
+author: "Jagadeesh Puvvula"
+date: "2023-07-21"
+output: pdf_document
+---
+
+```{r}
+#! use R 4.2.2
+Sys.setenv(R_VERSION="4.2.2")
+
+library(pacman)
+pacman::p_load(tidyverse, janitor)
+dat_origin<-  read_csv("E:/BBK17/pj/data_2023apr/obs_w_outcome/home_mirec_w_out.csv") |>
+  mutate(pb = if_else(cohort == "1", pb * 10, pb))
+data <- "E:/BBK17/pj/basc_brief_analy/data/"
+result<- "E:/BBK17/pj/basc_brief_analy/result/"
+analy_dat<- "E:/BBK17/pj/basc_brief_analy/analy_dat/"
+```
+
+#Select variables for BASC and BRIEF analysis 
+```{r}
+dat_basc<- dat_origin |>
+  clean_names()|>
+  select(-c(43:45))|>
+  rename(Pb=pb, Hg=hg, DMA=dma, DDE= dde, PBDE_47 = pbde47,
+         PCB_118=pcb118, PCB_138=pcb138, PCB_153=pcb153,
+         PCB_180=pcb180, PFHxS=pfhxs, PFOA=pfoa, PFOS=pfos,
+         BCEtP=bcetp, BDCPP=bdcpp, DBuP=dbup, DPhP=dphp,
+         TCS=tcs, BPA=bpa, MBP=mbp, MBZP=mbzp, MCPP=mcpp,
+         sigma_DEHP=dehp, MEP=mep, MIBP=mibp, di_Ethyl_OP=op_de,
+         di_Methyl_OP=op_dm, B_PB=b_pb, M_PB=m_pb, P_PB=p_pb, city=center,
+         mom_edu_cat=edu3)|>
+  mutate(race_bin = if_else(race == "white", 1, 2),
+         sex = if_else(sex == "Male", 1, 2)) |>
+  filter(if_all(43:47, ~ !is.na(.) & !grepl("^\\s*$", .) & !grepl("^\\.$", .))) #if_any didnt work here
+```
+
+# export data version for behavioral outcome analysis (all obs with outcome - has missing exposures)
+```{r}
+write_csv(dat_basc, paste0(data, "dat_basc.csv"))
+```
+
+#get subset with all outcomes and exposures
+```{r}
+dat_basc_all_exp<- dat_basc |>
+  filter(if_all(c(4:32), ~ !is.na(.) & !grepl("^\\s*$", .) & !grepl("^\\.$", .)))
+
+
+# 100 obs missing HOME score
+x<- dat_basc_all_exp |>
+  group_by(cohort, sex, city) |>
+  summarise(missing_home = sum(is.na(home_score_total)))
+```
+
+
+
+
