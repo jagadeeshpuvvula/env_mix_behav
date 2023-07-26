@@ -1,0 +1,137 @@
+---
+title: "02_variable selection"
+author: "Jagadeesh Puvvula"
+date: "2023-07-24"
+output: pdf_document
+---
+
+#libs
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, reshape2, janitor)
+```
+
+
+#data path
+```{r}
+data <- "E:/BBK17/pj/basc_brief_analy/data/"
+result<- "E:/BBK17/pj/basc_brief_analy/result/"
+analy_dat<- "E:/BBK17/pj/basc_brief_analy/analy_dat/"
+```
+
+#load data
+```{r}
+dat<- read_csv(paste0(data, "basc_imputed.csv")) |>
+  rename_at(vars(c(4:32)), ~toupper(.)) |>
+  select(c(PB, HG, DMA, 
+           DDE, PBDE_47, PCB_118, PCB_138, PCB_153, PCB_180,
+           PFHXS, PFOA, PFOS, 
+           BCETP, BDCPP, DBUP, DPHP, 
+           B_PB, M_PB, P_PB,
+           TCS, BPA, 
+           MBP, MBZP, MCPP, SIGMA_DEHP, MEP, MIBP,
+           DI_ETHYL_OP, DI_METHYL_OP,
+           cotinine, mom_age, home_score_total, 
+           basc_ext, basc_inz, basc_bsi, 
+           brief_wm, brief_po))
+```
+
+```{r, echo=FALSE, message=FALSE}
+#Pre-process data
+# convert exposures to log and center scale both x and y variables
+dat <- dat |>
+  mutate_all(~ log10(. + 1)) |>
+  mutate_all(~ (. - mean(.)) / sd(.))
+```
+
+```{r}
+# Define the predictor variables
+X <- as.matrix(dat[c(1:32)])
+Y <- as.matrix(dat[c(33:37)])
+
+# group index for X variables
+group<- as.integer(c(rep(1,times=3), rep(2,times=6), rep(3, times=3),
+                     rep(4,times=4), rep(5, times=3), rep(6,times=2),
+                     rep(7,times=6), rep(8, times=2), rep(9,times=3)))
+```
+
+```{r}
+pacman::p_load(gglasso, grpreg, sparsegl, Matrix, glmnet, stabs)
+```
+
+#variable selection results
+```{r}
+res<- var_selec(X, Y, group)
+
+```
+
+#process results
+```{r}
+# Add group variable to each list
+res <- lapply(res, function(x) {
+  df <- as.data.frame(x)
+  df$group <- group
+  round(df, 5)
+})
+
+
+combined_df_fin<- bind_rows(res, .id = "list_name") %>%
+  mutate(list_name = fct_recode(list_name, 
+                                BASC_EXT = "outcome1", BASC_INZ = "outcome2", BASC_BSI = "outcome3",
+                                BRIEF_WM= "outcome4", BRIEF_PO = "outcome5")) |>
+  rownames_to_column(var = "row_name") |>
+  mutate(row_name = str_remove_all(row_name, "\\.\\.\\.\\d+"))
+
+
+#expot data for manually cleaning the variable names
+write_csv(combined_df_fin, paste0(result, "varsel.csv"))
+```
+
+#visualize group lasso results
+```{r}
+#use the modified data 
+combined_df_fin<- read_csv(paste0(result, "varsel.csv")) |>
+  pivot_longer(!c(row_name, group, list_name), names_to = "model", values_to = "coef") |>
+  filter(model=="grpp_lasso" & group != 9)
+  
+
+ggplot(combined_df_fin, aes(x = model, y = row_name, 
+                            fill = ifelse(coef == 0 & !is.na(coef), "gray80", 
+                                          ifelse(coef > 0, "royalblue1", "orangered1"))))+
+  geom_tile(color="gray50", width=4) + 
+  scale_fill_identity() +
+  theme_minimal() + 
+  labs(x = "", y = "", fill = "Coefficient") +  
+  facet_grid(group~model*list_name, scales = "free_y", space = "free_y", switch = "both") + 
+  geom_text(aes(label = ifelse(!is.na(coef), round(coef,2), "")), 
+            color = "white", size = 3, fontface = "bold", show.legend = FALSE)+
+  scale_x_discrete(expand = c(0, 0))+
+  theme(axis.text=element_text(size=11), 
+        axis.title=element_text(size=11,face="bold"),
+        strip.text = element_text(size=11),
+        legend.text=element_text(size=11),
+        legend.title=element_text(size=11),
+        legend.position="bottom",
+        legend.justification="right",
+        legend.box="horizontal",
+        legend.box.just="center",
+        legend.margin=margin(t=0.1, r=0.1, b=0.1, l=0.1),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.major.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(size = 11), 
+        panel.spacing.x=unit(0, "lines"),
+        panel.spacing.y=unit(0.01, "lines"),
+        strip.text.x = element_text(angle = 65, margin = margin(0, 0, -15, 0)),
+        strip.text.y = element_blank())
+  
+```
+
+
+
+
+
+
+
+
