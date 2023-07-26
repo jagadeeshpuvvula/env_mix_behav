@@ -5,6 +5,7 @@ date: "2023-07-21"
 output: pdf_document
 ---
 
+#Generating missing data frequency and percent
 ```{r}
 missing_data_summary <- function(df) {
   # Create a dataframe with the count of missing values for each variable
@@ -84,6 +85,203 @@ replace_values <- function(x, original) {
   return(original)
 }
 ```
+
+#Variable selection
+```{r}
+var_selec <- function(X, Y, group) {
+  results <- list()
+  for (i in 1:5) {
+    y <- Y[, i]
+    # Group graphical Lasso
+    gr_cv <- cv.gglasso(X, y, group=group, loss="ls", pred.loss="L2",  nfolds=10)
+    gr_min_beta <- coef(gr_cv, s = gr_cv$lambda.min)[-1]
+  
+    # Group Lasso
+    grpp_cv <- cv.grpreg(X, y, group = group, penalty="grLasso",seed=5678,nfolds = 10)
+    grpp_min_beta <- coef(grpp_cv, s = grpp_cv$lambda.min)[-1]
+  
+    #Sparse lasso
+    sparse_cv<- cv.sparsegl(X, y, group = group, family = "gaussian", nfolds = 10)
+    sparse_min_beta<- coef(sparse_cv, s= sparse_cv$lambda.min)[-1]
+
+
+    #Stability selection with error control - input cross-validated lambda.min from cv-glmnet
+    stab_lambda_min <- cv.glmnet(X, y, nfolds=10)$lambda.min
+    stab_maxCoef <- stabsel(X, y, fitfun = glmnet.lasso_maxCoef, args.fitfun = list(lambda = stab_lambda_min), cutoff = 0.75, PFER = 1)
+    stab_maxCoef_selec<- stab_maxCoef$max
+  
+    # Store results in list
+    results[[paste0("outcome", i)]] <- as.data.frame(list(gr_lasso = gr_min_beta, 
+                                                          grpp_lasso = grpp_min_beta,
+                                                          sparse_lasso = sparse_min_beta,
+                                                          stab_cv_glmnet = stab_maxCoef_selec))
+  }
+  # Return list of results
+  return(results)
+}
+```
+
+#qgcomp_loop
+```{r}
+qgcomp_func <- function(outcomes, dat, output_folder, chemicals, covariates, 
+                        include_sex = TRUE, include_cohort = TRUE) {
+ 
+  for (sex_level in c("all", "Female", "Male")) {
+    if (include_sex) {
+      if (sex_level == "all") {
+        sex_data <- dat
+        sex_formula <- "sex + "
+      } else {
+        sex_data <- subset(dat, sex == sex_level)
+        sex_formula <- ""
+      }
+    } else {
+      sex_data <- dat
+      sex_formula <- ""
+    }
+   
+    for (cohort_level in c("all", "home", "mirec")) {
+      if (include_cohort) {
+        if (cohort_level == "all") {
+          cohort_data <- sex_data
+          cohort_formula <- "cohort + city+"
+          filename_prefix <- paste0(sex_level, "_all")
+        } else if (cohort_level == "home") {
+          cohort_data <- subset(sex_data, cohort == "1")
+          cohort_formula <- ""
+          filename_prefix <- paste0(sex_level, "_home")
+        } else if (cohort_level == "mirec") {
+          cohort_data <- subset(sex_data, cohort == "2")
+          cohort_formula <- "city +"
+          filename_prefix <- paste0(sex_level, "_mirec")
+        } else {
+          stop("Invalid cohort level")
+        }
+      } else {
+        cohort_data <- sex_data
+        cohort_formula <- ""
+        filename_prefix <- paste0(sex_level, "_all")
+      }
+     
+      for(outcome in outcomes){
+        formula <- as.formula(paste(outcome, chemicals, sex_formula, cohort_formula, covariates))
+       
+        nb <- qgcomp.noboot(formula, expnms = mixture, data = cohort_data, family= gaussian(), q=10)
+        boot <- qgcomp.boot(formula, expnms = mixture, data = cohort_data, family= gaussian(), q=10, B = 400, seed = 2022)
+        save(nb, file = paste0(output_folder, "/", "nb_", filename_prefix, "_", outcome, ".rda"))
+        save(boot, file = paste0(output_folder, "/", "boot_", filename_prefix, "_", outcome, ".rda"))
+      }
+    }
+  }
+}
+```
+
+#get qgcomp estimates
+```{r}
+get_gcomp_estimates<- function(results_folder) {
+  # get the file names in the folder
+  file_names <- list.files(results_folder)
+  
+  # create empty data frame to store the results
+  results <- data.frame(file = character(),
+                        estimate = numeric(),
+                        lower_ci = numeric(),
+                        upper_ci = numeric(),
+                        stringsAsFactors = FALSE)
+  
+  #loops through all .rda files and extract estimates, CI & p-values
+  for (file_name in file_names) {
+    # load the object from the file
+    load(file.path(results_folder, file_name))
+    # extract the object name using grep or grepl
+    object_name <- ls()[grep("^boot|^nb", ls())]
+    # extract the required information using the summary function and the object name
+    estimate <- get(object_name)$coef["psi1"]
+    CI <- get(object_name)$ci
+    lower_ci <- CI[1]
+    upper_ci <- CI[2]
+    p_value <- get(object_name)$pval[2]
+    # split file name by "_" and remove ".rda"
+    file_parts <- strsplit(gsub("\\.rda", "", file_name), "_")[[1]]
+    # assign parts to variables
+    part1 <- file_parts[1]
+    part2 <- file_parts[2]
+    part3 <- file_parts[3]
+    part4 <- file_parts[5]
+    # print out the values
+    cat("File:", file_name, "\n")
+    cat("  Estimate:", estimate, "\n")
+    cat("  Lower CI:", lower_ci, "\n")
+    cat("  Upper CI:", upper_ci, "\n")
+    cat("  p-value:", p_value, "\n")
+    cat("  Part 1:", part1, "\n")
+    cat("  Part 2:", part2, "\n")
+    cat("  Part 3:", part3, "\n")
+    cat("  Part 4:", part4, "\n")
+    # add the results to the data frame
+    results <- rbind(results, data.frame(boot_strp = part1,
+                                         gender = part2,
+                                         cohort = part3,
+                                         outcome = part4,
+                                         estimate = estimate,
+                                         lower_ci = lower_ci,
+                                         upper_ci = upper_ci,
+                                         p_value = p_value,
+                                         stringsAsFactors = FALSE))
+    # remove the object from the R environment to avoid conflicts with other objects (all objects saved as nb or boot)
+    rm(list = object_name)
+  }
+  
+  return(results)
+}
+```
+
+#extract qgcomp weights
+```{r}
+extract_weights <- function(folder_location) {
+  # get list of files that start with "nb"
+  nb_files <- list.files(path = folder_location, pattern = "^nb.*\\.rda$", full.names = TRUE)
+  
+  # create empty list to store results
+  results_list <- list()
+  
+  # loop through each nb file
+  for (file in nb_files) {
+    # load data from file
+    load(file)
+    
+    # extract neg and pos weights
+    neg <- as.data.frame(nb$neg.weights) |> 
+      rename(weight = `nb$neg.weights`) |> 
+      rownames_to_column("chemical") |> 
+      mutate(direction="neg")
+    
+    pos <- as.data.frame(nb$pos.weights) |> 
+      rename(weight = `nb$pos.weights`) |> 
+      rownames_to_column("chemical") |> 
+      mutate(direction="pos")
+    
+    weights_df <- bind_rows(neg, pos)
+    
+    # extract file name without path and .rda extension using regular expression
+    file_name <- sub(".*/(.*)\\.rda", "\\1", file)
+    
+    # add file name as a variable to weights_df
+    weights_df$file_name <- file_name
+    
+    # append weights_df to results_list
+    results_list[[file_name]] <- weights_df
+  }
+  
+  # combine all results into a single dataframe
+  results_df <- do.call(rbind, results_list)
+  
+  return(results_df)
+}
+```
+
+
+
 
 
 
