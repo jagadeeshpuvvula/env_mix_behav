@@ -1,0 +1,167 @@
+---
+title: "03_qgcomp"
+author: "Jagadeesh Puvvula"
+date: "2023-07-24"
+output: pdf_document
+---
+
+#libs
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, qgcomp)
+```
+
+
+#data path
+```{r}
+data <- "E:/BBK17/pj/basc_brief_analy/data/"
+result<- "E:/BBK17/pj/basc_brief_analy/result/"
+analy_dat<- "E:/BBK17/pj/basc_brief_analy/analy_dat/"
+```
+
+#for all 29 chemicals
+```{r}
+dat<- read_csv(paste0(data, "basc_imputed.csv")) |>
+  select(c(Pb, Hg, DMA, DDE, PBDE_47, PCB_118, PCB_138, PCB_153, PCB_180,
+          PFHxS, PFOA, PFOS, BCEtP, BDCPP, DBuP, DPhP, TCS, BPA, MBP, MBZP,
+          MCPP, sigma_DEHP, MEP, MIBP, di_Ethyl_OP, di_Methyl_OP, 
+          B_PB, M_PB, P_PB, cotinine, home_score_total, mom_age, 
+          cohort, city, sex, race_bin,  mom_edu_cat, parity_n,
+          basc_ext, basc_inz, basc_bsi, brief_wm, brief_po)) |>
+  mutate(across(all_of(c("cohort", "city", "sex", "race_bin", 
+                         "parity_n", "mom_edu_cat")), as.factor),
+         sex = ifelse(sex == "1", "Male", "Female")) |>
+  mutate_at(vars(1:30), ~log10(.+0.0000001)) |>
+  rename_with(~ paste0("log_", .x), 1:30) 
+
+mixture<- names(dat[c(1:29)])
+```
+
+#Run models
+```{r}
+qgcomp_func(outcomes = names(dat)[39:43], 
+            output_folder = paste0(result, "qgcomp/all_chem"), 
+            include_sex = TRUE, include_cohort = TRUE, 
+            chemicals = "~log_Pb+log_Hg+log_DMA+log_DDE+log_PBDE_47+log_PCB_118+log_PCB_138+log_PCB_153+log_PCB_180+log_PFHxS+log_PFOA+log_PFOS+log_BCEtP+log_BDCPP+log_DBuP+log_DPhP+log_TCS+log_BPA+log_MBP+log_MBZP+log_MCPP+log_sigma_DEHP+log_MEP+log_MIBP+log_di_Ethyl_OP+log_di_Methyl_OP+log_B_PB+log_M_PB+log_P_PB+",
+            covariates= "race_bin + log_cotinine +mom_edu_cat + home_score_total + parity_n + mom_age",
+            dat = dat)
+```
+
+#extract results
+```{r}
+results<- get_gcomp_estimates(results_folder = paste0(result, "qgcomp/all_chem"))
+write_csv(results, paste0(result, "qgcomp/all_chem/r_obj_summ.csv"))
+```
+
+#data prep for visualizing estimates and CI
+```{r}
+res<- results |>
+  rename(bootstrap=boot_strp) |>
+  mutate(p_value = if_else(p_value <= 0.05, "<0.05", ">0.05"),
+         cohort = fct_recode(as.factor(cohort), Pooled = "all", HOME = "home", MIREC = "mirec"),
+         gender = fct_recode(as.factor(gender), All = "all", Female = "Female", Male = "Male"),
+         bootstrap = fct_recode(as.factor(bootstrap), Yes = "boot", No = "nb"),
+         outcome =  toupper(outcome)) |>
+  filter(abs(lower_ci) <= 40 & abs(upper_ci) <= 40)
+
+res$cohort<- factor(res$cohort, levels = c("Pooled", "HOME", "MIREC"))
+
+cbbPalette <- c("#D55E00", "#0072B2")
+```
+
+#visualizing estimates and CI
+```{r, echo=FALSE, message=FALSE, fig.height=4, fig.width=6, dpi=300}
+ggplot(res, aes(x = as.factor(cohort), y = estimate, ymin = lower_ci, ymax = upper_ci)) + 
+  geom_pointrange(aes(col = as.factor(p_value), shape=bootstrap), 
+                  position=position_dodge(width=0.5),size = 0.6) +
+  geom_hline(aes(yintercept = 0), linetype="dashed") + 
+  scale_colour_manual(values=cbbPalette) +
+  labs(x=NULL,
+       y=expression(paste(beta[q-gcomp]," [95% CI]")),
+       title = "",
+       caption = "")+
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"))+
+  theme(plot.caption = element_text(size = 6),
+        plot.title=element_text(size = 10, hjust = 0),
+        panel.border = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"),
+        text=element_text(size=10),
+        axis.text = element_text(size = 10),
+        axis.text.x=element_text(size=10,angle=0),
+        axis.ticks.x=element_blank(),
+        strip.text.x=element_text(size=10,angle=0),
+        strip.text.y = element_text(size=10),
+        strip.placement = "outside",
+        strip.background = element_rect(fill=NULL, colour = NULL),
+        legend.box.just = "center",
+        legend.spacing = unit(0, "cm"),
+        legend.position = "bottom",
+        legend.box = "horizontal",
+        legend.direction = "horizontal",
+        legend.text = element_text(size = 8),
+        legend.key = element_blank(),
+        legend.key.height = unit(3, "mm"))+
+  guides(col=guide_legend(title = "P-value"),
+         shape=guide_legend(title = "Bootstrap"))+
+  facet_grid(gender~outcome, scales = "free", switch = "x", space = "free_x")
+```
+
+#extract chemical weights 
+```{r}
+qgcomp_weights <- extract_weights(paste0(result, "qgcomp/all_chem"))
+write_csv(qgcomp_weights, paste0(result, "qgcomp/all_chem/chem_weight.csv"))
+```
+
+#data prep for visualization
+```{r}
+dat <- qgcomp_weights |> 
+  mutate(file_name = str_remove(file_name, "nb_")) |>
+  separate(file_name, c("gender", "cohort", "wppsi", "outcome"), sep = "_") |>
+  mutate(weight= if_else(direction=="neg", weight*-1, weight),
+         chemical=gsub("log_", "", chemical),
+         outcome = str_to_upper(outcome),
+         cohort = fct_recode(cohort, "Pooled" = "all",
+                             "HOME" = "home",
+                             "MIREC" = "mirec"),
+         gender =fct_recode(gender, "All"= "all"))
+
+# specify the order of levels in a factor variable
+dat$chemical <- factor(dat$chemical,
+                      levels = c("Pb", "Hg", "DMA", "DDE", "PBDE_47", "PCB_118", "PCB_138", "PCB_153", "PCB_180",
+                                 "PFHxS", "PFOA", "PFOS", "BCEtP", "BDCPP", "DBuP", "DPhP", "TCS", "BPA", "MBP",
+                                 "MBZP", "MCPP", "sigma_DEHP", "MEP", "MIBP", "di_Ethyl_OP", "di_Methyl_OP", 
+                                 "B_PB", "M_PB", "P_PB"))
+```
+
+
+#visualize chemical weights
+```{r}
+ggplot(dat, aes( y = chemical, x=cohort, fill = weight))+
+  geom_tile()+
+  geom_text(aes(label = round(weight, 2)), 
+            color = "black", size = 3, fontface = "bold", show.legend = FALSE)+
+  labs(x = "", y = "", fill = "weight")+
+  facet_grid(~outcome+gender, scales = "free_y", space = "free_y", switch = "both")+
+  theme_bw()+
+  theme(axis.text=element_text(size=11), 
+        axis.title=element_text(size=11,face="bold"),
+        strip.text = element_text(size=11),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.major.y = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 11),
+        axis.text.y = element_text(size = 11), 
+        panel.spacing.x=unit(0.02, "lines"),
+        panel.spacing.y=unit(0.02, "lines"),
+        strip.text.y = element_blank())+
+  guides(fill=FALSE)+
+  scale_fill_gradient2(low = "red", mid = "gray", high = "blue", 
+                       midpoint = 0, name = "Weight",
+                       guide = guide_colorbar(title.position = "top",
+                                              title.hjust = 0.5))
+
+```
+
