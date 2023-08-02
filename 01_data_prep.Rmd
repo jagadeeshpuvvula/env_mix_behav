@@ -5,21 +5,11 @@ date: "2023-07-21"
 output: pdf_document
 ---
 
-```{r}
-#! use R 4.2.2
-Sys.setenv(R_VERSION="4.2.2")
-
-library(pacman)
-pacman::p_load(tidyverse, janitor, reshape2, SuperLearner, caret)
-dat_origin<-  read_csv("E:/BBK17/pj/data_2023apr/obs_w_outcome/home_mirec_w_out.csv") |>
-  mutate(pb = if_else(cohort == "1", pb * 10, pb))
-data <- "E:/BBK17/pj/basc_brief_analy/data/"
-result<- "E:/BBK17/pj/basc_brief_analy/result/"
-analy_dat<- "E:/BBK17/pj/basc_brief_analy/analy_dat/"
-```
-
 #Select variables for BASC and BRIEF analysis 
 ```{r}
+dat_origin<-  read_csv("E:/BBK17/pj/data_2023apr/obs_w_outcome/home_mirec_w_out.csv") |>
+  mutate(pb = if_else(cohort == "1", pb * 10, pb))
+
 dat_basc<- dat_origin |>
   clean_names()|>
   select(-c(43:45))|>
