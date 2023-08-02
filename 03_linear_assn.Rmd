@@ -1,0 +1,101 @@
+---
+title: "03_linear_assn"
+author: "Jagadeesh Puvvula"
+date: "2023-08-02"
+output: pdf_document
+---
+
+#read data
+```{r}
+dat<- read_csv(paste0(data, "basc_imputed.csv")) |>
+  select(c(Pb, Hg, DMA, DDE, PBDE_47, PCB_118, PCB_138, PCB_153, PCB_180,
+          PFHxS, PFOA, PFOS, BCEtP, BDCPP, DBuP, DPhP, TCS, BPA, MBP, MBZP,
+          MCPP, sigma_DEHP, MEP, MIBP, di_Ethyl_OP, di_Methyl_OP, 
+          B_PB, M_PB, P_PB, cotinine, home_score_total, mom_age, 
+          cohort, city, sex, race_bin,  mom_edu_cat, parity_n,
+          basc_ext, basc_inz, basc_bsi, brief_wm, brief_po)) |>
+  mutate(across(all_of(c("cohort", "city", "sex", "race_bin", 
+                         "parity_n", "mom_edu_cat")), as.factor),
+         sex = ifelse(sex == "1", "Male", "Female")) |>
+  mutate_at(vars(1:30), ~log10(.+0.0000001)) |>
+  rename_with(~ paste0("log_", .x), 1:30) |>
+  filter(basc_ext != 0 & basc_inz != 0 & basc_bsi != 0 & brief_wm != 0 & brief_po != 0) # drop subjects with zero scores
+```
+
+# get linear regression results 
+```{r}
+res<- lm_exp_mixtures(dependent_vars = names(dat)[39:43],
+                      independent_vars = names(dat)[1:29],
+                      covariates = c(names(dat)[30:32], names(dat)[36:38]),
+                      data = dat,
+                      include_sex = TRUE, include_cohort = TRUE)
+```
+
+# Save lm results
+```{r}
+write_csv(res, paste0(result, "lm/lm_single_chem_basc_brief.csv"))
+```
+
+#data prep for visualization
+```{r}
+dat_lm_res<- res |>
+  rename(chemical="independent_variable", outcome="dependent_variable")|>
+  mutate(p_sig= if_else(p_value<0.05, "sig", "non_sig"),
+         chemical=gsub("log_", "", chemical),
+         cohort_level = fct_recode(cohort_level, "Pooled" = "all",
+                                   "HOME" = "home",
+                                   "MIREC" = "mirec"),
+         sex_level =fct_recode(sex_level, "All"= "all"),
+         outcome =fct_recode(outcome, "BASC_BSI"= "basc_bsi",
+                             "BASC_EXT" = "basc_ext",
+                             "BASC_INZ" = "basc_inz",
+                             "BRIEF_PO" = "brief_po",
+                             "BRIEF_WM" = "brief_wm"))
+  
+
+# specify the order of levels in a factor variable
+dat_lm_res$chemical <- factor(dat_lm_res$chemical,
+                      levels = c("Pb", "Hg", "DMA", "DDE", "PBDE_47", "PCB_118", "PCB_138", "PCB_153", "PCB_180",
+                                 "PFHxS", "PFOA", "PFOS", "BCEtP", "BDCPP", "DBuP", "DPhP", "TCS", "BPA", "MBP",
+                                 "MBZP", "MCPP", "sigma_DEHP", "MEP", "MIBP", "di_Ethyl_OP", "di_Methyl_OP", 
+                                 "B_PB", "M_PB", "P_PB"))
+```
+
+
+# visualization of lm results
+```{r}
+ggplot(dat_lm_res, aes(x = cohort_level  , y = chemical, fill = coefficient))+
+  geom_tile()+
+  geom_text(aes(label = round(coefficient, 2),
+                fontface = ifelse(p_sig == "sig", "bold", "plain")),
+            color = "black", size = 3, show.legend = FALSE) +
+  labs(x = "", y = "", fill = "coefficient")+
+  facet_grid(.~outcome+sex_level, scales = "free_y", space = "free_y", switch = "both")+
+  theme_bw()+
+  theme(axis.text=element_text(size=10), 
+        axis.title=element_text(size=10,face="bold"),
+        strip.text = element_text(size=10),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.major.y = element_blank(),
+        axis.text.x = element_text(angle = 35, hjust = 1, vjust = 1, size = 10),
+        axis.text.y = element_text(size = 10), 
+        panel.spacing.x=unit(0.02, "lines"),
+        panel.spacing.y=unit(0.02, "lines"),
+        strip.text.y = element_blank())+
+  guides(fill=FALSE)+
+  scale_fill_gradient2(low = "red", mid = "gray", high = "blue", 
+                       midpoint = 0, name = "Weight",
+                       guide = guide_colorbar(title.position = "top",
+                                              title.hjust = 0.5))
+
+
+```
+
+#export lm visualization
+```{r}
+ggsave("E:/BBK17/pj/data_2023apr/results/lm/lm_coef.tiff", 
+       width = 14,height = 6,
+       dpi=300)
+```
+
