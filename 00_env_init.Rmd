@@ -8,13 +8,13 @@ output: pdf_document
 #library and r env
 ```{r}
 library(pacman)
-pacman::p_load(tidyverse, janitor, reshape2)
+pacman::p_load(tidyverse, janitor, reshape2, haven, qgcomp, qgcompint, bkmr)
 
 #load these libraries from below to get the versions while wrapping up the project
 #pacman::p_load(qgcomp, bkmr, Matrix, fields, bindrcpp, gglasso, grpreg, sparsegl, Matrix, glmnet, stabs)
 
 # Call the function to print the version information
-print_version_info()
+#print_version_info()
 ```
 
 #folder locations

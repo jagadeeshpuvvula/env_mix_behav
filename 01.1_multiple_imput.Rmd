@@ -1,0 +1,33 @@
+---
+title: "01.1_multiple_imputation"
+author: "Jagadeesh Puvvula"
+date: "2025-27-01"
+output: pdf_document
+---
+
+```{r}
+dat_mi <- dat_basc |>
+  filter(subject_id %in% dat$subject_id) |>
+  mutate(across(c(cohort, city, sex, race, parity_n, mom_edu_cat, race_bin), as.factor))
+```
+
+#multiple imputation
+#missing 100 obs home sc; 2 maternal edu; maternal depression 5
+```{r}
+library(mice)
+```
+
+#pmm for all continous variables and proportional odds model for maternal education
+```{r}
+method <- c(rep("pmm", 41), "polr", rep("pmm", 7))
+
+mi_dat <- mice(data = dat_mi,
+               m = 15,
+               seed = 2025,
+               method = method)
+
+     
+
+save(mi_dat, file="E:/BBK17/pj/basc_brief_analy/data/basc_brief_mi.rda")
+```
+

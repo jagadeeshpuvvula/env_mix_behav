@@ -7,7 +7,7 @@ output: pdf_document
 
 #load data
 ```{r}
-dat<- read_csv(paste0(data, "basc_imputed.csv")) |>
+dat<- read_csv(paste0(data, "basc_imputed_nov_2024.csv")) |>
   rename_at(vars(c(4:32)), ~toupper(.)) |>
   select(c(PB, HG, DMA, 
            DDE, PBDE_47, PCB_118, PCB_138, PCB_153, PCB_180,

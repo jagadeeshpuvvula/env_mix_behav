@@ -1,0 +1,80 @@
+---
+title: "05_bkmr_mi"
+author: "Jagadeesh Puvvula"
+date: "2025-01-28"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+p_load(tidyverse, mice, bkmr, causalbkmr, magrittr, bkmrhat, future)
+```
+
+#multiple imputed data
+```{r}
+load("E:/BBK17/pj/basc_brief_analy/data/basc_brief_mi.rda")
+
+male_mi_dat <- filter(mi_dat, sex == 1) # 1=male
+```
+
+#loop across outcome variables - 5k iterations - all gender
+```{r}
+#mi_dat<- male_mi_dat
+
+# Define the y variables you want to analyze
+y_variables <- colnames(complete(mi_dat, 1))[43:47]
+
+# Create output directory if it doesn't exist
+output_dir <- "E:/BBK17/pj/basc_brief_analy/result/bkmr_mi/"
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+
+# Iterate through y variables
+for (y_var in y_variables) {
+  # Create a name for the results file
+  result_filename <- file.path(output_dir, paste0("bkmr_male_", y_var, ".rda"))
+  
+  # Run BKMR analysis for current y variable
+  results <- run_parallel_bkmr(
+    zdfmi = mi_dat,  
+    y_var = y_var,   
+    #x_vars = colnames(complete(mi_dat, 1))[c(33:38,42,48,49)]
+    x_vars = colnames(complete(mi_dat, 1))[c(33,35:38,42,48,49)],  #removing sex of geneder specific analysis
+    z_vars = colnames(complete(mi_dat, 1))[4:32],   
+    log2_vars = colnames(complete(mi_dat, 1))[4:33],
+    num_imputations = 15,
+    iter = 5000,
+    workers = 10
+  )
+  
+  # Save results and immediately remove from global environment
+  save(results, file = result_filename)
+  rm(results)
+  
+  # Optional: Print progress
+  cat(sprintf("Completed analysis and saved results for %s\n", y_var))
+}
+```
+
+
+#extract results
+
+```{r}
+load("E:/BBK17/pj/basc_brief_analy/result/bkmr_mi/bkmr_all_sex_brief_wm.rda")
+
+#update depending on number of iterations
+sel.MI <- seq(500,5000, by = 10) 
+
+overallrisks.MI <- OverallRiskSummaries.MI(BKMRfits = results$parallel_fits, 
+                                           qs = seq(0.1, 0.9, by = 0.05),  
+                                           q.fixed = 0.5, 
+                                           sel = sel.MI, 
+                                           method = "approx") 
+
+ggplot(overallrisks.MI, aes(quantile, est, ymin = est - 1.96 * sd, ymax = est + 1.96 * sd)) +  
+  geom_hline(yintercept = 00, linetype = "dashed", color = "gray") + 
+  geom_pointrange()+ ggtitle("") + scale_y_continuous(name="estimate")+
+  theme_bw()
+```
+
+
+

@@ -23,8 +23,27 @@ dat_basc<- dat_origin |>
          mom_edu_cat=edu3)|>
   mutate(race_bin = if_else(race == "white", 1, 2),
          sex = if_else(sex == "Male", 1, 2)) |>
-  filter(if_all(43:47, ~ !is.na(.) & !grepl("^\\s*$", .) & !grepl("^\\.$", .))) #if_any didnt work here
+  filter(if_all(43:47, ~ !is.na(.) & !grepl("^\\s*$", .) & !grepl("^\\.$", .))) |> #if_any didnt work here
+  filter(basc_ext != 0 & basc_inz != 0 & basc_bsi != 0 & brief_wm != 0 & brief_po != 0) |>
+  left_join(mat_dep, by="subject_id")
 ```
+
+#missing data viz - BASC/BRIEF
+```{r}
+library(naniar)
+
+vis_miss(dat_basc[,4:48], cluster = T)
+```
+
+#count observations if any of chemical biomarker is present
+```{r}
+any_exp_cnt<- dat_basc |>
+  filter(!if_all(4:32, is.na))
+
+missing_home_score<- dat_basc |>
+  filter(subject_id %in% dat$subject_id)
+```
+
 
 # export data version for behavioral outcome analysis (all obs with outcome - has missing exposures)
 ```{r}
@@ -50,39 +69,6 @@ x<- dat_basc_all_exp |>
 #missing data summary
 ```{r}
 dat_miss<- missing_data_summary(dat_basc_all_exp) #ref999
-```
-
-
-#correlations
-```{r}
-dat_cor<- dat_basc_all_exp |> select(c(4:33, 37:39, 41:45)) |> #38 = HOME score
-  drop_na()
-
-cormat <- round(x=cor(dat_cor, method = "spearman", use = "complete.obs"), digits = 2) |>
-  melt() |> 
-  clean_names()
-
-ggplot(cormat, aes(x = var2, y = var1, fill = value)) + #, label = value
-  geom_tile(color = "white") +
-  #geom_text(color = "black", size = 3, vjust = 1) +
-  scale_fill_gradient2(low = "red", high = "blue", mid = "white",
-                       midpoint = 0,
-                       limit = c(-1, 1), space = "Lab",
-                       name = "Spearman Correlation | HOME & MIREC [n=704]") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, vjust = 1, size = 11, hjust = 1),
-        axis.text.y = element_text(angle = 0, vjust = 0.5, size = 11, hjust = 1),
-        axis.title.x = element_blank(),
-        axis.title.y = element_blank(),
-        panel.grid.major = element_blank(),
-        panel.border = element_blank(),
-        panel.background = element_blank(),
-        axis.ticks = element_blank(),
-        legend.position = "bottom", legend.box = "horizontal") +
-  coord_fixed() #+
-  # add vertical and horizontal lines to separate variable groups
-  #geom_vline(xintercept = c(0, 3.5, 9.5, 12.5,  16.5, 19.5, 21.5, 27.5, 29.5), color = "black", size=1.25) +
-  #geom_hline(yintercept = c(0, 3.5, 9.5, 12.5, 16.5, 19.5, 21.5, 27.5, 29.5), color = "black", size=1.25) 
 ```
 
 #Impute unmeasured HOME score data using SuperLearner
@@ -132,6 +118,78 @@ original <- replace_values(x, dat_basc_all_exp)
 write_csv(original, paste0(data, "basc_imputed.csv"))
 ```
 
+#adding maternal depression variable
+```{r}
+df<- read_csv(paste0(data, "basc_imputed.csv"))
+
+#BDI Score baseline - calculated z-scores
+home_mat_dep<- read_sas(paste0(data, "HOME_covariates.sas7bdat")) |>
+  clean_names() |>
+  select(c(1,23))|>
+  mutate(subject_id = as.character(subject_id))|>
+  rename(mat_dep = bdi_bhv) |>
+  mutate(mat_dep_z = (mat_dep - mean(mat_dep, na.rm = TRUE)) / sd(mat_dep, na.rm = TRUE))
+
+#CES-D score from MIREC - calcualted z-scores
+mirec_mat_dep<- read_csv("E:\\BBK17\\4. BBK17_CD+ CRF data corrections_Nov18 2022\\CDPLUS.2_NEURO.7_20221117\\MSAQ_DATA_DEPRESSION_Yes to NEURO BBK.csv") |>
+  clean_names() |>
+  select(c(2,20)) |>
+  rename(mat_dep = cesdepq5cd)|>
+  mutate(mat_dep_z = (mat_dep - mean(mat_dep, na.rm = TRUE)) / sd(mat_dep, na.rm = TRUE))
+
+
+#join maternal depression data from HOME and MIREC
+mat_dep<- bind_rows(home_mat_dep, mirec_mat_dep) |>
+  select(c(1,3))
+
+df_nov_2024<- left_join(df, mat_dep, by="subject_id") |>
+  mutate(mat_dep_z = if_else(is.na(mat_dep_z), 
+                             median(mat_dep_z, na.rm = TRUE), 
+                             mat_dep_z))
+
+write_csv(df_nov_2024, paste0(data, "basc_imputed_nov_2024.csv"))
+```
+
+#correlations
+#load dat from 04_ee_qgcomp file
+```{r}
+dat_cor<- dat |> select(c(1:29, 31,32, 39,45,40:44)) |> #38 = HOME score
+  drop_na() |>
+  rename_with(~ gsub("_", "-", toupper(.)))
+
+cormat <- round(x=cor(dat_cor, method = "spearman", use = "complete.obs"), digits = 2) |>
+  melt() |> 
+  clean_names()
+
+ggplot(cormat, aes(x = var2, y = var1, fill = value)) + #, label = value
+  geom_tile(color = "white") +
+  #geom_text(color = "black", size = 3, vjust = 1) +
+  scale_fill_gradient2(low = "red", high = "blue", mid = "white",
+                       midpoint = 0,
+                       limit = c(-1, 1), space = "Lab",
+                       name = "Spearman Correlation | HOME & MIREC [n=695]") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, size = 11, hjust = 1),
+        axis.text.y = element_text(angle = 0, vjust = 0.5, size = 11, hjust = 1),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position = "bottom", legend.box = "horizontal") +
+  coord_fixed() +
+  # add vertical and horizontal lines to separate variable groups
+  geom_vline(xintercept = c(0.5, 29.5, 33.5, 38.5), color = "black", size=1.25) +
+  geom_hline(yintercept = c(0.5, 29.5, 33.5, 38.5), color = "black", size=1.25) 
+```
+
+#export figure
+```{r}
+ggsave("E:/BBK17/pj/basc_brief_analy/result/spearman_corr.tiff", 
+       width = 12,height = 12,
+       dpi=300)
+```
 
 
 

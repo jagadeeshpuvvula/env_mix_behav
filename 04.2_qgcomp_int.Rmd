@@ -1,0 +1,94 @@
+---
+title: "04.2_qgcomp_int"
+author: "Jagadeesh Puvvula"
+date: "2025-02-05"
+output: pdf_document
+---
+
+#single imputed dataset
+```{r}
+data <- "E:/BBK17/pj/basc_brief_analy/data/"
+dat_si <- read_csv(paste0(data, "basc_imputed_nov_2024.csv")) 
+```
+
+#for all 29 chemicals
+```{r}
+dat<- dat_si |>
+  rename(BCEP=BCEtP, BDCIPP=BDCPP, DNBP=DBuP, DPhP=DPhP)|>
+  mutate(across(all_of(c("cohort", "city", "sex", "race_bin", 
+                         "parity_n", "mom_edu_cat")), as.factor),
+         sex = ifelse(sex == "1", "Male", "Female"),
+         log_cotinine = log2(cotinine+ 1e-6)) |>
+  mutate(sex =  as.factor(sex)) |>
+  filter(basc_ext != 0 & basc_inz != 0 & basc_bsi != 0 & brief_wm != 0 & brief_po != 0) |>
+  select(c(Pb, Hg, DMA, DDE, PBDE_47, PCB_118, PCB_138, PCB_153, PCB_180,
+          PFHxS, PFOA, PFOS, BCEP, BDCIPP, DNBP, DPhP, TCS, BPA, MBP, MBZP,
+          MCPP, sigma_DEHP, MEP, MIBP, di_Ethyl_OP, di_Methyl_OP, 
+          B_PB, M_PB, P_PB, log_cotinine, home_score_total, mom_age, 
+          cohort, city, sex, race_bin,  mom_edu_cat, parity_n, mat_dep_z,
+          basc_ext, basc_inz, basc_bsi, brief_wm, brief_po)) |>
+  drop_na() |>
+  as.data.frame()
+
+mixture<- names(dat[c(1:29)])
+```
+
+#qgc interactions
+```{r}
+qgcomp_emm <- function(outcomes, data, output_folder, chemicals, covariates, q, b) {
+  for(outcome in outcomes){
+    formula <- as.formula(paste(outcome, chemicals,covariates))
+    
+    nb <- qgcomp.emm.noboot(formula, expnms = mixture, emmvar = "sex", data = data, 
+                            family= gaussian(), q=q)
+    boot <- qgcomp.emm.boot(formula, expnms = mixture, emmvar = "sex", data = data, 
+                            family= gaussian(), q=q, B = b, seed = 2025)
+    
+    save(nb, file = paste0(output_folder, "/", "emm_nb",  "_", outcome, ".rda"))
+    save(boot, file = paste0(output_folder, "/", "emm_boot", "_", outcome, ".rda"))
+  }
+  }
+```
+
+#interaction for 29 chemical mixture
+```{r}
+qgcomp_emm(outcomes = c("basc_ext", "basc_inz", "basc_bsi", "brief_wm", "brief_po"), 
+            output_folder = "E:/BBK17/pj/basc_brief_analy/result/qgcomp/qgcomp_emm/",
+            chemicals = "~sex+ Pb+ Hg+ DMA+ DDE+
+           PBDE_47+ PCB_118+ PCB_138+ PCB_153+ PCB_180+ 
+           PFHxS+ PFOA+ PFOS+ 
+           BCEP+ BDCIPP+ DNBP+ DPhP+ 
+           TCS+ BPA+ 
+           MBP+ MBZP+ MCPP+ sigma_DEHP+ MEP+ MIBP+ 
+           di_Ethyl_OP+ di_Methyl_OP+ 
+           B_PB+ M_PB+ P_PB+",
+           covariates= "race_bin + log_cotinine +mom_edu_cat + home_score_total + mat_dep_z+ parity_n + mom_age + cohort + city",
+            q=4,
+            b=400,
+            data = dat)
+```
+
+
+#print interaction term slope and p-value
+```{r}
+load("E:/BBK17/pj/basc_brief_analy/result/qgcomp/qgcomp_emm/emm_boot_basc_bsi.rda")
+
+summary_data <- ls() %>%
+  .[1] %>%
+  get() %>%
+  summary() %>%
+  `[[`("coefficients") %>%
+  `[`("psi3", )
+
+sprintf("Estimate: %.2f (%.2f, %.2f), Pr(>|t|): %.2f",
+                            round(summary_data["Estimate"], 2),
+                            round(summary_data["Lower CI"], 2),
+                            round(summary_data["Upper CI"], 2),
+                            round(summary_data["Pr(>|t|)"], 2))
+
+rm(list = ls())
+```
+
+
+
+

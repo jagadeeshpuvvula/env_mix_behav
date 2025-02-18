@@ -1,0 +1,151 @@
+---
+title: "05.1_bkmr_si"
+author: "Jagadeesh Puvvula"
+date: "2025-02-14"
+output: pdf_document
+---
+
+```{r}
+dat_si <- read_csv(paste0(data, "basc_imputed_nov_2024.csv")) 
+
+dat<- dat_si |>
+  select(c(Pb, Hg, DMA, DDE, PBDE_47, PCB_118, PCB_138, PCB_153, PCB_180,
+          PFHxS, PFOA, PFOS, BCEtP, BDCPP, DBuP, DPhP, TCS, BPA, MBP, MBZP,
+          MCPP, sigma_DEHP, MEP, MIBP, di_Ethyl_OP, di_Methyl_OP, 
+          B_PB, M_PB, P_PB, cotinine, home_score_total, mom_age, 
+          cohort, city, sex, race_bin,  mom_edu_cat, parity_n, mat_dep_z,
+          basc_ext, basc_inz, basc_bsi, brief_wm, brief_po)) |>
+  rename(BCEP=BCEtP, BDCIPP=BDCPP, DNBP=DBuP, DPhP=DPhP)|>
+  mutate(across(all_of(c("cohort", "city", "sex", "race_bin", 
+                         "parity_n", "mom_edu_cat")), as.integer),
+         log_cotinine = log2(cotinine+ 1e-6)) |>
+  filter(basc_ext != 0 & basc_inz != 0 & basc_bsi != 0 & brief_wm != 0 & brief_po != 0)
+
+
+```
+
+#for 29 chemicals
+```{r}
+chemicals_29<- c("Pb","Hg", "DMA",
+              "DDE", "PBDE_47","PCB_118","PCB_138", "PCB_153","PCB_180",
+              "PFHxS", "PFOA", "PFOS",
+              "BCEP", "BDCIPP", "DNBP", "DPhP",
+              "TCS", "BPA",
+              "di_Ethyl_OP", "di_Methyl_OP",
+              "MBP","MBZP","MCPP", "sigma_DEHP","MEP","MIBP",
+              "B_PB", "M_PB", "P_PB")
+chem_group_29<- c(rep(1,times=3), rep(2,times=6), rep(3, times=3),
+               rep(4,times=4), rep(5,times=2), rep(6,times=2),
+               rep(7,times=6), rep(8,times=3))
+outcomes<-c("basc_ext","basc_inz", "basc_bsi", "brief_wm", "brief_po")
+covariates<- c("race_bin", "log_cotinine", "mom_edu_cat", 
+               "home_score_total", "parity_n", "mom_age", "mat_dep_z")
+
+# for all chemicals select 1:32
+dat <- dat |>
+  mutate_at(vars(1:29), ~log2(.+0.0000001)) |>
+  drop_na() |>
+  mutate_all(as.numeric)
+```
+
+=================================================================================
+#BKMR loop
+#Non-linearlity modeled using #knots = (15/sample size)*100
+#convergence tested at 100 iterations
+# TUNE nd value in knots100 object and iter in kmbayes function
+
+#Run model (select either sex or cohort to TRUE: Convergence issue)
+#for all 29 chemicals
+```{r}
+bkmr_sex(data=dat, 
+          folder_path = "E:/BBK17/pj/basc_brief_analy/result/bkmr_si", 
+          ln_mixture_vars= chemicals_29,
+          groups=chem_group_29,
+          outcome_vars= outcomes, 
+          covariate_vars= covariates, 
+          include_sex = TRUE, iter = 50000)
+```
+
+#Extracting PIPs and overall estimates
+```{r}
+results <- extract_data_from_folder("E:/BBK17/pj/basc_brief_analy/result/bkmr_si",
+                                    select_iterations= seq(25000, 50000, by = 50),
+                                    estimate_sequence= seq(0.10, 0.90, by = 0.05))
+```
+
+#prepare data for plotting
+```{r}
+overall_risk<- results[2] |>as.data.frame() |>
+  clean_names()|>
+  rename("outcome" = "overall_risk_df_measure_name",
+         "cohort" = "overall_risk_df_outcome_name",
+         "gender"= "overall_risk_df_data_name") |>
+  mutate(cohort = fct_recode(as.factor(cohort), Pooled = "all")) |>
+  mutate(outcome = fct_recode(as.factor(outcome), BASC_BSI = "bsi", BASC_EXT = "ext", BASC_INZ = "inz", BRIEF_PO = "po", BRIEF_WM = "wm")) |>
+  mutate(gender = fct_recode(as.factor(gender), All = "all", Female = "female", Male = "male"))
+```
+
+#plotting overall estimates
+```{r}
+ggplot(overall_risk, aes(overall_risk_df_quantile, overall_risk_df_est, 
+                         ymin = overall_risk_df_est - 1.96*overall_risk_df_sd, 
+                         ymax = overall_risk_df_est + 1.96*overall_risk_df_sd)) + 
+    geom_hline(yintercept = 00, linetype = "dashed", color = "gray") + 
+    geom_pointrange(size = 0.15, aes(color = ifelse((overall_risk_df_est - 1.96 * overall_risk_df_sd) <= 0 &
+                                                  (overall_risk_df_est + 1.96 * overall_risk_df_sd) >= 0,
+                                                "Credible intervals with null", "Credible intervals without null"))) + 
+  scale_color_manual(values = c("Credible intervals with null" = "black", "Credible intervals without null" = "#D55E00")) +
+    labs(x=NULL,
+       y=expression(paste(beta[italic(bkmr)]," [95% CrI]")),
+       title = "",
+       caption = "")+
+  theme_bw()+
+    facet_grid(gender~outcome, scales = "free")+
+    theme(axis.line = element_line(colour = "black"),
+          axis.text=element_text(size=10), 
+          axis.title=element_text(size=10,face="bold"),
+          strip.text = element_text(size=10),
+          axis.text.x = element_text(angle = 0, hjust = 1, vjust = 1, size = 10),
+          axis.text.y = element_text(size = 10), 
+          panel.spacing.x=unit(0.5, "lines"),
+          panel.spacing.y=unit(0.5, "lines"),
+          panel.grid.minor = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.major.y = element_blank(),
+          plot.caption = element_text(size = 6),
+          plot.title=element_text(size = 10, hjust = 0),
+          panel.border = element_blank(),
+          text=element_text(size=10),
+          axis.ticks.x=element_blank(),
+          strip.text.x=element_text(size=10,angle=0),
+          strip.text.y = element_text(size=10),
+          strip.placement = "outside",
+          strip.background = element_rect(fill =  "transparent"),
+          legend.box.just = "center",
+          legend.spacing = unit(0, "cm"),
+          legend.position = "bottom",
+          legend.box = "horizontal",
+          legend.direction = "horizontal",
+          legend.text = element_text(size = 8),
+          legend.key = element_blank(),
+          legend.key.height = unit(3, "mm")) +
+  guides(col=guide_legend(title = " "))+
+  scale_x_continuous(breaks = seq(0.2, 0.8, by = 0.3),
+                     labels = seq(0.2, 0.8, by = 0.3))
+
+```
+
+#save effect estimate plots
+```{r}
+ggsave("E:/BBK17/pj/basc_brief_analy/result/bkmr_si/bkmr_29_chem.tiff", 
+       width = 10,height = 6,
+       dpi=300)
+```
+
+#risks for a biomarker by holding all other biomarkers at 50th percentile
+```{r}
+
+```
+
+
+

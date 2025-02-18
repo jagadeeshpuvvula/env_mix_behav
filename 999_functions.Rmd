@@ -5,7 +5,10 @@ date: "2023-07-21"
 output: pdf_document
 ---
 
-#Generating missing data frequency and percent
+#' Generated missing data frequency and percent
+#' @param df input dataframe should be in wide format
+#' @return returns a datatable with variable name, count and frequency in the global environment
+#' export
 ```{r}
 missing_data_summary <- function(df) {
   # Create a dataframe with the count of missing values for each variable
@@ -32,7 +35,11 @@ missing_data_summary <- function(df) {
 }
 ```
 
-#imputation using SuperLearner
+#' imputation using SuperLearner 
+#' exclusive to the mixture analysis project
+#' @param data takes a dataframe with missing information - assuming missing at random - unmeasured data
+#' @param var_name user input's a variable of interest that has missing observations and that need to be imputed
+#' @return retuns a complete dataframe withouth missing data and prints the MSE value for the prediction model
 ```{r}
 impute_missing <- function(data, var_name) {
   
@@ -86,13 +93,20 @@ replace_values <- function(x, original) {
 }
 ```
 
-#Variable selection
+# Variable selection using 4 algorithms
+# group LASSO (grpreg and gglasso), sparse group lasso, and stability selection with error control
+# This function will take a matrix of X (which represents exposures/covariates), Y (reperesent outcomes) 
+# and a list group (to classify metric from matrix X to different groups)
+# the output will be a list of lists that need to be compiled into a dataframe using cbind
 ```{r}
 var_selec <- function(X, Y, group) {
+  #load libraries
+  pacman::p_load(gglasso, grpreg, sparsegl, Matrix, glmnet, stabs)
   results <- list()
-  for (i in 1:5) {
+  for (i in 1:ncol(Y)) {
     y <- Y[, i]
     # Group graphical Lasso
+    set.seed=5678
     gr_cv <- cv.gglasso(X, y, group=group, loss="ls", pred.loss="L2",  nfolds=10)
     gr_min_beta <- coef(gr_cv, s = gr_cv$lambda.min)[-1]
   
@@ -118,56 +132,147 @@ var_selec <- function(X, Y, group) {
   }
   # Return list of results
   return(results)
+  
+  # Unload the libraries after the function is complete - conflicts with tidyverse
+  detach(package:gglasso)
+  detach(package:grpreg)
+  detach(package:sparsegl)
+  detach(package:Matrix)
+  detach(package:glmnet)
+  detach(package:stabs)
 }
 ```
 
-#qgcomp_loop
+# Linear regression for mixtures project 
+# Associations between a single chemical and an outcome per iteration adjusting for covariates
+# This function needs variable named sex and/or cohort to turn on the include_sex/include_cohort for stratified analysis
+# Input formar - dataframe. User need to provide list of dependent, indipendent variables, covariates and a dataframe
+# This function will produce a dataframe that will contain observations each of them is a linear regression result with a 
+# combination between exposure and outcome variable
 ```{r}
-qgcomp_func <- function(outcomes, dat, output_folder, chemicals, covariates, 
-                        include_sex = TRUE, include_cohort = TRUE) {
- 
+lm_exp_mixtures <- function(dependent_vars, independent_vars, covariates, data, include_sex = TRUE, include_cohort = TRUE) {
+  # create empty lists to store results
+  dependent_list <- list()
+  independent_list <- list()
+  sex_level_list <- list()
+  cohort_level_list <- list()
+  coef_list <- list()
+  p_value_list <- list()
+
   for (sex_level in c("all", "Female", "Male")) {
     if (include_sex) {
       if (sex_level == "all") {
-        sex_data <- dat
-        sex_formula <- "sex + "
+        sex_data <- data
+        sex_formula <- "+sex"
       } else {
-        sex_data <- subset(dat, sex == sex_level)
+        sex_data <- subset(data, sex == sex_level)
         sex_formula <- ""
       }
     } else {
-      sex_data <- dat
+      sex_data <- data
       sex_formula <- ""
     }
-   
+
     for (cohort_level in c("all", "home", "mirec")) {
       if (include_cohort) {
         if (cohort_level == "all") {
           cohort_data <- sex_data
-          cohort_formula <- "cohort + city+"
-          filename_prefix <- paste0(sex_level, "_all")
+          cohort_formula <- "+cohort + city"
         } else if (cohort_level == "home") {
           cohort_data <- subset(sex_data, cohort == "1")
           cohort_formula <- ""
-          filename_prefix <- paste0(sex_level, "_home")
         } else if (cohort_level == "mirec") {
           cohort_data <- subset(sex_data, cohort == "2")
-          cohort_formula <- "city +"
-          filename_prefix <- paste0(sex_level, "_mirec")
+          cohort_formula <- "+city"
         } else {
           stop("Invalid cohort level")
         }
       } else {
         cohort_data <- sex_data
         cohort_formula <- ""
-        filename_prefix <- paste0(sex_level, "_all")
       }
-     
-      for(outcome in outcomes){
-        formula <- as.formula(paste(outcome, chemicals, sex_formula, cohort_formula, covariates))
-       
-        nb <- qgcomp.noboot(formula, expnms = mixture, data = cohort_data, family= gaussian(), q=10)
-        boot <- qgcomp.boot(formula, expnms = mixture, data = cohort_data, family= gaussian(), q=10, B = 400, seed = 2022)
+
+      # loop through all combinations of dependent and independent variables
+      for (i in 1:length(dependent_vars)) {
+        for (j in 1:length(independent_vars)) {
+          # run linear regression with covariates
+          formula <- as.formula(paste(dependent_vars[i], "~", paste(independent_vars[j], "+", 
+                                                                    paste(covariates, collapse = " + "), 
+                                                                    sex_formula, cohort_formula)))
+          model <- lm(formula, cohort_data)
+
+          # store results in lists
+          dependent_list[[length(dependent_list) + 1]] <- dependent_vars[i]
+          independent_list[[length(independent_list) + 1]] <- independent_vars[j]
+          sex_level_list[[length(sex_level_list) + 1]] <- sex_level
+          cohort_level_list[[length(cohort_level_list) + 1]] <- cohort_level
+          coef_list[[length(coef_list) + 1]] <- coef(model)[independent_vars[j]]
+          p_value_list[[length(p_value_list) + 1]] <- summary(model)$coefficients[independent_vars[j], 4]
+        }
+      }
+    }
+  }
+
+  # create dataframe with results
+  results <- data.frame(
+    dependent_variable = unlist(dependent_list),
+    independent_variable = unlist(independent_list),
+    sex_level = unlist(sex_level_list),
+    cohort_level = unlist(cohort_level_list),
+    coefficient = unlist(coef_list),
+    p_value = unlist(p_value_list)
+  )
+
+  # return dataframe
+  return(results)
+}
+```
+
+
+
+#qgcomp_loop
+```{r}
+qgcomp_func <- function(outcomes, data, output_folder, chemicals, covariates,
+                        include_sex = TRUE, include_cohort = TRUE, q, b, seed) {
+
+  sex_levels <- if (include_sex) c("all", "Female", "Male") else "all"
+  cohort_levels <- if (include_cohort) c("all", "home", "mirec") else "all"
+
+  for (sex_level in sex_levels) {
+    if (sex_level == "all") {
+      sex_data <- data
+      sex_formula <- "sex"
+    } else {
+      sex_data <- subset(data, sex == sex_level)
+      sex_formula <- ""
+    }
+
+    for (cohort_level in cohort_levels) {
+      if (cohort_level == "all") {
+        cohort_data <- sex_data
+        cohort_formula <- "+cohort + city"
+        filename_prefix <- paste0(sex_level, "_all")
+      } else if (cohort_level == "home") {
+        cohort_data <- subset(sex_data, cohort == "1")
+        cohort_formula <- ""
+        filename_prefix <- paste0(sex_level, "_home")
+      } else if (cohort_level == "mirec") {
+        cohort_data <- subset(sex_data, cohort == "2")
+        cohort_formula <- "+city"
+        filename_prefix <- paste0(sex_level, "_mirec")
+      } else {
+        stop("Invalid cohort level")
+      }
+
+      for (outcome in outcomes) {
+        formula <- as.formula(paste(outcome, "~",
+                                    paste(chemicals, collapse = " + "), "+",
+                                    sex_formula, "+",
+                                    cohort_formula, "+",
+                                    paste(covariates, collapse = " + ")))
+
+        nb <- qgcomp.noboot(formula, expnms = mixture, data = cohort_data, family = gaussian(), q = q)
+        boot <- qgcomp.boot(formula, expnms = mixture, data = cohort_data, family = gaussian(), q = q, B = b, seed = seed)
         save(nb, file = paste0(output_folder, "/", "nb_", filename_prefix, "_", outcome, ".rda"))
         save(boot, file = paste0(output_folder, "/", "boot_", filename_prefix, "_", outcome, ".rda"))
       }
@@ -181,14 +286,14 @@ qgcomp_func <- function(outcomes, dat, output_folder, chemicals, covariates,
 get_gcomp_estimates<- function(results_folder) {
   # get the file names in the folder
   file_names <- list.files(results_folder)
-  
+
   # create empty data frame to store the results
   results <- data.frame(file = character(),
                         estimate = numeric(),
                         lower_ci = numeric(),
                         upper_ci = numeric(),
                         stringsAsFactors = FALSE)
-  
+
   #loops through all .rda files and extract estimates, CI & p-values
   for (file_name in file_names) {
     # load the object from the file
@@ -231,9 +336,10 @@ get_gcomp_estimates<- function(results_folder) {
     # remove the object from the R environment to avoid conflicts with other objects (all objects saved as nb or boot)
     rm(list = object_name)
   }
-  
+
   return(results)
 }
+
 ```
 
 #extract qgcomp weights
@@ -241,49 +347,162 @@ get_gcomp_estimates<- function(results_folder) {
 extract_weights <- function(folder_location) {
   # get list of files that start with "nb"
   nb_files <- list.files(path = folder_location, pattern = "^nb.*\\.rda$", full.names = TRUE)
-  
-  # create empty list to store results
+
+  # create an empty list to store results
   results_list <- list()
-  
+
   # loop through each nb file
   for (file in nb_files) {
     # load data from file
     load(file)
-    
+
     # extract neg and pos weights
-    neg <- as.data.frame(nb$neg.weights) |> 
-      rename(weight = `nb$neg.weights`) |> 
-      rownames_to_column("chemical") |> 
-      mutate(direction="neg")
-    
-    pos <- as.data.frame(nb$pos.weights) |> 
-      rename(weight = `nb$pos.weights`) |> 
-      rownames_to_column("chemical") |> 
-      mutate(direction="pos")
-    
+    neg <- as.data.frame(nb$neg.weights) |>
+      rename(weight = `nb$neg.weights`) |>
+      rownames_to_column("chemical") |>
+      mutate(direction = "neg")
+
+    pos <- as.data.frame(nb$pos.weights) |>
+      rename(weight = `nb$pos.weights`) |>
+      rownames_to_column("chemical") |>
+      mutate(direction = "pos")
+
     weights_df <- bind_rows(neg, pos)
-    
+
     # extract file name without path and .rda extension using regular expression
     file_name <- sub(".*/(.*)\\.rda", "\\1", file)
-    
-    # add file name as a variable to weights_df
+
+    # Add "file_name" as a variable to weights_df
     weights_df$file_name <- file_name
-    
-    # append weights_df to results_list
-    results_list[[file_name]] <- weights_df
+
+    # Extract psi values and add them as rows
+    if (is.list(nb$psi)) {
+      psi1 <- nb$psi$psi1
+    } else {
+      psi1 <- NA
+    }
+
+    psi_df <- data.frame(chemical = "neg.psi", weight = nb$neg.psi, direction = "neg_psi", file_name = file_name) |>
+      rbind(data.frame(chemical = "pos.psi", weight = nb$pos.psi, direction = "pos_psi", file_name = file_name)) |>
+      rbind(data.frame(chemical = "psi1", weight = nb$psi, direction = "psi1", file_name = file_name))
+
+    # Append psi_df to weights_df
+    combined_df <- bind_rows(weights_df, psi_df)
+
+    # Append combined_df to results_list
+    results_list[[file_name]] <- combined_df
   }
-  
-  # combine all results into a single dataframe
+
+  # Combine all results into a single dataframe
   results_df <- do.call(rbind, results_list)
-  
+
   return(results_df)
 }
+
 ```
 
+#bkmr multiple imputation
+```{r}
+run_parallel_bkmr <- function(zdfmi, y_var, x_vars, z_vars, log2_vars, num_imputations, iter = 5000, workers = 8) {
+    # Set up parallel processing
+    future::plan(strategy = future::multisession, workers = workers)
+    
+    # Initialize list for futures
+    ff <- list()
+    
+    # Generate random seeds
+    ss = round(runif(num_imputations) * .Machine$integer.max)
+    
+    # Function to convert factors to numeric
+    convert_factors_to_numeric <- function(df) {
+        for(col in names(df)) {
+            if(is.factor(df[[col]]) || is.character(df[[col]])) {
+                # Convert to factor first if character
+                if(is.character(df[[col]])) {
+                    df[[col]] <- as.factor(df[[col]])
+                }
+                # Convert factor to numeric, preserving levels
+                df[[col]] <- as.numeric(df[[col]])
+            }
+        }
+        return(df)
+    }
+    
+    # Function to apply log2 transformation
+    apply_log2_transform <- function(df, log2_vars) {
+        for(col in log2_vars) {
+            if(col %in% names(df)) {
+                df[[col]] <- log2(df[[col]]+0.000001)
+            }
+        }
+        return(df)
+    }
+    
+    # Run parallel BKMR for each imputation
+    for (ii in 1:num_imputations) {
+        ff[[ii]] <- future({
+            # Get complete data for this imputation
+            current_data <- mice::complete(zdfmi, ii)
+            
+            # Convert factors to numeric
+            current_data <- convert_factors_to_numeric(current_data)
+            
+            # Apply log2 transformation to specified variables
+            current_data <- apply_log2_transform(current_data, log2_vars)
+            
+            # Extract X, Y, and Z from the completed dataset
+            y = current_data[[y_var]]
+            X = as.matrix(current_data[, x_vars])
+            Z = as.matrix(current_data[, z_vars])
+            
+            # Run BKMR
+            bkmr::kmbayes(y = y, 
+                         X = X, 
+                         Z = Z, 
+                         iter = iter,
+                         groups = c(rep(1,times=3), rep(2,times=6), rep(3, times=3),
+                                  rep(4,times=4), rep(5,times=2), rep(6,times=2),
+                                  rep(7,times=6), rep(8,times=3)),
+                         verbose=TRUE, varsel=TRUE)
+        }, seed = ss[ii])
+    }
+    
+    # Collect results
+    parallelfits <- future::value(ff)
+    
+    # Set class for parallel fits
+    class(parallelfits) <- c("bkmrfit.list", "list")
+    
+    # Calculate parallel estimates across chains, 50% burnin
+    ors_parallel = bkmrhat::OverallRiskSummaries_parallel(parallelfits)
+    
+    # Pooling sample to get summary estimate, 50% burnin
+    pooledfit = kmbayes_combine(parallelfits)
+    ors_pooled = bkmr::OverallRiskSummaries(pooledfit)
+    
+    # Calculate Rubin's rule estimator
+    Vb = tapply(ors_parallel$est, ors_parallel$quantile, var)  # "between" variance
+    Vw = tapply(ors_parallel$sd^2, ors_parallel$quantile, mean)  # "within" variance
+    mn = tapply(ors_parallel$est, ors_parallel$quantile, mean)  # point estimate
+    Vr = Vw + Vb*(1+1/num_imputations)
+    quant = tapply(ors_parallel$quantile, ors_parallel$quantile, mean)
+    
+    # Create pooled estimates dataframe using Rubin's rules
+    rubins_estimates <- data.frame(
+        quantile = quant,
+        est = mn,
+        sd = sqrt(Vr)
+    )
+    
+    # Return results
+    return(list(
+        parallel_fits = parallelfits,
+        ors_parallel = ors_parallel,
+        pooled_fit = pooledfit,
+        ors_pooled = ors_pooled,
+        rubins_estimates = rubins_estimates
+    ))
+}
 
-
-
-
-
-
+```
 
