@@ -144,8 +144,75 @@ ggsave("E:/BBK17/pj/basc_brief_analy/result/bkmr_si/bkmr_29_chem.tiff",
 
 #risks for a biomarker by holding all other biomarkers at 50th percentile
 ```{r}
+rda_files <- list.files("E:/BBK17/pj/basc_brief_analy/result/bkmr_si/", "\\.rda$", full.names = TRUE)
 
+for (file in rda_files) {
+  name <- tools::file_path_sans_ext(basename(file)) # Extract filename without extension
+  assign(name, get(load(file)), envir = .GlobalEnv) # Load and assign to filename
+}
+
+
+# Get all objects in the global environment that match the pattern
+fit_objects <- ls(pattern = "^bkmr_")
+
+# Apply the function and store results in a dataframe
+results_df <- do.call(rbind, lapply(fit_objects, function(fit_name) {
+  res <- bkmr::SingVarRiskSummaries(
+    fit = get(fit_name),
+    qs.diff = c(0.25, 0.75),
+    q.fixed = c(0.50),
+    method = "exact"
+  )
+  res$fit_name <- fit_name # Add a column to track source object
+  res
+}))
+
+# Convert to tibble for better readability
+results_df <- tibble::as_tibble(results_df)
+
+combined_df<- results_df |>
+  mutate(
+    gender = word(fit_name, 2, sep = "_") |> str_to_title(),
+    outcome = str_extract(fit_name, "[^_]+_[^_]+$") |> toupper()
+  )
+
+write_csv(combined_df, "E:/BBK17/pj/basc_brief_analy/result/bkmr_si/risk_from_pct_25_75.csv")
 ```
 
+```{r}
+ggplot(combined_df, 
+       aes(fct_rev(variable), est, 
+           ymin = est - 1.96*sd, 
+           ymax = est + 1.96*sd,
+           color= est<0)) + 
+  geom_hline(aes(yintercept = 0), linetype="dashed", color= "grey50") +
+  scale_color_manual(values = c("TRUE" = "royalblue", "FALSE" = "black"),
+                     name= "Estimate trend",
+                     labels= c("Positive", "Negative")) +
+  labs(y = "Estimate", x = "Biomarker")+
+  geom_pointrange(position = position_dodge(width = 0.75)) + 
+  coord_flip()+
+  facet_grid(.~outcome+gender, scales = "free_x")+
+  theme_bw()+
+  theme(
+    axis.title = element_text(color = "black", size = 11),
+    axis.text = element_text(color = "black", size = 11),
+    axis.text.x = element_text(angle = 90),
+    plot.title = element_text(color = "black", size = 11),
+    strip.background = element_rect(fill = "white"),
+    strip.text = element_text(size = 12, face = "bold"),
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    legend.title = element_text(size = 11, color = "black"),
+    legend.text = element_text(size = 11, color = "black")
+  )
+```
+
+```{r}
+ggsave("E:/BBK17/pj/basc_brief_analy/result/bkmr_si/50th_pct_plot.tiff", 
+       bg="white",
+       width = 16,height = 8,
+       dpi=300)
+```
 
 
