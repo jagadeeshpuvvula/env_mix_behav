@@ -1,0 +1,155 @@
+---
+title: "04.3_qgc_mi"
+author: "Jagadeesh Puvvula"
+date: "2025-03-03"
+output: pdf_document
+---
+
+#multiple imputation data
+```{r}
+load("E:/BBK17/pj/basc_brief_analy/data/basc_brief_mi.rda")
+
+dat_mi<- mice::complete(mi_dat, 1)
+```
+
+#for all 29 chemicals
+```{r}
+dat<- dat_mi |>
+  select(c(Pb, Hg, DMA, DDE, PBDE_47, PCB_118, PCB_138, PCB_153, PCB_180,
+          PFHxS, PFOA, PFOS, BCEtP, BDCPP, DBuP, DPhP, TCS, BPA, MBP, MBZP,
+          MCPP, sigma_DEHP, MEP, MIBP, di_Ethyl_OP, di_Methyl_OP, 
+          B_PB, M_PB, P_PB, cotinine, home_score_total, mom_age, 
+          cohort, city, sex, race_bin,  mom_edu_cat, parity_n, mat_dep_z,
+          basc_ext, basc_inz, basc_bsi, brief_wm, brief_po)) |>
+  rename(BCEP=BCEtP, BDCIPP=BDCPP, DNBP=DBuP, DPhP=DPhP)|>
+  mutate(across(all_of(c("cohort", "city", "sex", "race_bin", 
+                         "parity_n", "mom_edu_cat")), as.factor),
+         sex = ifelse(sex == "1", "Male", "Female"),
+         log_cotinine = log2(cotinine+ 1e-6)) |>
+  filter(basc_ext != 0 & basc_inz != 0 & basc_bsi != 0 & brief_wm != 0 & brief_po != 0)
+```
+
+
+#process MI data for manual qgcomp
+```{r}
+# Define mixture chemicals
+mixture <- c("Pb", "Hg", "DMA", "DDE", "PBDE_47", "PCB_118", "PCB_138", "PCB_153", "PCB_180",
+              "PFHxS", "PFOA", "PFOS", "BCEP", "BDCIPP", "DNBP", "DPhP", "TCS", "BPA", "MBP", "MBZP",
+              "MCPP", "sigma_DEHP", "MEP", "MIBP", "di_Ethyl_OP", "di_Methyl_OP", 
+              "B_PB", "M_PB", "P_PB")
+
+# Process data first
+mi_dat_long <- mice::complete(mi_dat, action = "long", include = T) |>
+  rename(BCEP = BCEtP, BDCIPP = BDCPP, DNBP = DBuP, DPhP = DPhP) |>
+  mutate(across(all_of(c("cohort", "city", "sex", "race_bin", 
+                        "parity_n", "mom_edu_cat")), as.factor),
+         sex = ifelse(sex == "1", "Male", "Female"),
+         log_cotinine = log2(cotinine + 1e-6)) |>
+  select(c(Pb, Hg, DMA, DDE, PBDE_47, PCB_118, PCB_138, PCB_153, PCB_180,
+          PFHxS, PFOA, PFOS, BCEP, BDCIPP, DNBP, DPhP, TCS, BPA, MBP, MBZP,
+          MCPP, sigma_DEHP, MEP, MIBP, di_Ethyl_OP, di_Methyl_OP, 
+          B_PB, M_PB, P_PB, 
+          log_cotinine, home_score_total, mom_age, 
+          cohort, city, sex, race_bin, mom_edu_cat, parity_n, mat_dep_z,
+          basc_ext, basc_inz, basc_bsi, brief_wm, brief_po,
+          .imp, .id))
+
+# Create empty list to store results
+quantized_data_list <- list()
+
+# Process each imputation separately
+for (imp in unique(mi_dat_long$.imp)) {
+  # Extract data for this imputation
+  imp_data <- mi_dat_long |> filter(.imp == imp)
+  
+  # Store imputation id and other non-mixture columns
+  imp_id <- imp_data$.imp
+  id_vals <- imp_data$.id
+  other_cols <- imp_data |> 
+    select(-all_of(mixture)) |> 
+    select(-.imp, -.id)  # Temporarily remove .imp and .id
+  
+  # Quantize the mixture variables
+  quant_result <- qgcomp::quantize(imp_data, expnms = mixture, q = 4)
+  
+  # Extract quantized data
+  if (is.list(quant_result) && "data" %in% names(quant_result)) {
+    # If it returns a list with a data component
+    quantized_df <- quant_result$data
+  } else {
+    # If it returns the data frame directly
+    quantized_df <- quant_result
+  }
+  
+  # Check if we need to extract only the mixture columns from quantized data
+  if (ncol(quantized_df) > length(mixture)) {
+    quantized_df <- quantized_df |> select(all_of(mixture))
+  }
+  
+  # Restore the imputation identifier and other columns
+  result_df <- bind_cols(
+    quantized_df,
+    other_cols,
+    tibble(.imp = imp_id, .id = id_vals)
+  )
+  
+  # Add to our list
+  quantized_data_list[[length(quantized_data_list) + 1]] <- result_df
+}
+
+# Combine all results
+mi_dat_long_quantized <- bind_rows(quantized_data_list)
+
+mi_dat_quantized_mids<- mice::as.mids(mi_dat_long_quantized)
+```
+
+#manual check
+```{r}
+#use quantize to transform the data
+x_compar<- qgcomp::quantize(dat, expnms = mixture, q=4)[[1]] |> select(c(1:29))
+y_compar<- mi_dat_long_quantized |> filter(.imp == 1)|> select(c(1:29))
+
+check<- identical(x_compar, y_compar)
+```
+
+#save quantized clean MI object in mids format
+```{r}
+#save(mi_dat_quantized_mids, file = "E:/BBK17/pj/basc_brief_analy/data/mi_dat_quantized_mids.rda")
+```
+
+#linear reg
+```{r}
+#load("E:/BBK17/pj/basc_brief_analy/data/mi_dat_quantized_mids.rda")
+
+#outcomes <- c("basc_bsi", "basc_ext", "basc_inz", "brief_po", "brief_wm")
+
+qgc_man<- with(mi_dat_quantized_mids,
+               lm(brief_wm ~
+                    Pb+ Hg+ DMA+ DDE+ 
+                    PBDE_47+ PCB_118+ PCB_138+ PCB_153+ PCB_180+ 
+                    PFHxS+ PFOA+ PFOS+ 
+                    BCEP+ BDCIPP+ DNBP+ DPhP+ 
+                    TCS+ BPA+ 
+                    MBP+ MBZP+ MCPP+ sigma_DEHP+ MEP+ MIBP+ 
+                    di_Ethyl_OP+ di_Methyl_OP+ 
+                    B_PB+ M_PB+ P_PB+ 
+                    log_cotinine+ home_score_total+ mom_age+ 
+                    cohort+ city+ 
+                    sex+ 
+                    race_bin+ mom_edu_cat+ parity_n+ mat_dep_z)
+               )
+
+pooled_est<- summary(mice::pool(qgc_man))
+
+#results
+cat("Psi:", sprintf("%.2f", sum(pooled_est$estimate[2:30])), "\n")
+cat("Scaled positive effect:", sprintf("%.2f", sum(pooled_est$estimate[2:30][pooled_est$estimate[2:30] > 0])), "\n")
+cat("Scaled negative effect:", sprintf("%.2f", sum(pooled_est$estimate[2:30][pooled_est$estimate[2:30] < 0])), "\n")
+```
+
+
+
+
+
+
+
